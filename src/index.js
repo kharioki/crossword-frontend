@@ -1,17 +1,25 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import './index.css';
 import App from './App';
-import reportWebVitals from './reportWebVitals';
 
-ReactDOM.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-  document.getElementById('root')
-);
+import getConfig from './config';
+import { viewMethodOnContract } from './utils';
+import { data } from './hardcoded-data';
 
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
-reportWebVitals();
+// initCrossword called before passing data to the app.
+// pass env variable NEAR_ENV used to designate the blockchain network (testnet, betanet, mainnet)
+async function initCrossword() {
+  const nearConfig = getConfig(process.env.NEAR_ENV || 'testnet');
+  const solutionHash = await viewMethodOnContract(nearConfig, 'get_solution');
+  return { data, solutionHash }
+}
+
+initCrossword()
+  .then(({ data, solutionHash }) => {
+    ReactDOM.render(
+      <React.StrictMode>
+        <App data={data} solutionHash={solutionHash} />
+      </React.StrictMode>,
+      document.getElementById('root')
+    );
+  });
