@@ -1,6 +1,9 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, near_bindgen};
 
+// 5 Ⓝ in yoctoNEAR
+const PRIZE_AMOUNT: u128 = 5_000_000_000_000_000_000_000_000;
+
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct AnswerDirection {
@@ -64,6 +67,40 @@ impl Crossword {
             puzzles: LookupMap::new(b"c"),
             unsolved_puzzles: UnorderedSet::new(b"u"),
         }
+    }
+
+    pub fn submit_solution(&mut self, solution: String, memo: String) {
+        let hashed_input = env::sha256(solution.as_bytes());
+        let hashed_input_hex = hex::encode(&hashed_input);
+
+        // Check to see if the hashed answer is among the puzzles
+        let mut puzzle = self
+            .puzzles
+            .get(&hashed_input_hex)
+            .expect("ERR_NOT_CORRECT_ANSWER");
+        
+        // Check if the puzzle is already solved. If it's unsolved, set the status to solved
+        // then proceed to update the puzzle and pay the winner
+        puzzle.status = match.puzzle.status {
+            PuzzleStatus::Unsolved => PuzzleStatus::Solved { memo: memo.clone() },
+            _ => {
+                env::panic_str("ERR_PUZZLE_ALREADY_SOLVED");
+            }
+        };
+
+        // Reinsert the puzzle back in after we modified the status:
+        self.puzzles.insert(&hashed_input_hex, &puzzle);
+        // Remove from the list of unsolved ones
+        self.unsolved_puzzles.remove(&hashed_input_hex);
+
+        log!(
+            "Puzzle with solution hash {} solved, with memo: {}",
+            hashed_input_hex,
+            memo
+        );
+
+        // Transfer the prize money to the winner
+        Promise::new(env::predecessor_account_id()).transfer(PRIZE_AMOUNT);
     }
 
     pub fn get_solution(&self) -> String {
