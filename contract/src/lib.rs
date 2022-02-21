@@ -1,18 +1,68 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::{env, near_bindgen};
 
-#[near_bindgen]
-#[derive(Default, BorshDeserialize, BorshSerialize)]
-pub struct Contract {
-    crossword_solution: String,
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct AnswerDirection {
+    Across,
+    Down,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct PuzzleStatus {
+    Unsolved,
+    Solved { memo: String },
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct CoordinatePair {
+    x: u8,
+    y: u8,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Answer {
+    num: u8,
+    start: CoordinatePair,
+    direction: AnswerDirection,
+    length: u8,
+    clue: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct JsonPuzzle {
+    solution_hash: String,
+    status: PuzzleStatus,
+    answer: Vec<Answer>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Debug)]
+pub struct Puzzle {
+    status: PuzzleStatus, // an enum
+    // use the CoordinatePair assuming the origin is (0,0) in the top left corner
+    answer: Vec<Answer>, // struct
 }
 
 #[near_bindgen]
-impl Contract {
+#[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
+pub struct Crossword {
+    owner_id: AccountId,
+    puzzles: LookupMap<String, Puzzle>,
+    unsolved_puzzles: UnorderedSet<String>,
+}
+
+#[near_bindgen]
+impl Crossword {
     #[init]
-    pub fn new(solution: String) -> Self {
+    pub fn new(owner_id: AccountId) -> Self {
         Self {
-            crossword_solution: solution,
+            owner_id,
+            puzzles: LookupMap::new(b"c"),
+            unsolved_puzzles: UnorderedSet::new(b"u"),
         }
     }
 
@@ -31,6 +81,25 @@ impl Contract {
             env::log_str("Try again.");
             false
         }
+    }
+
+    // adding a new crossword puzzle
+    pub fn new_puzzle(&mut self, solution_hash: String, answers: Vec<Answer>) {
+        assert_eq!(
+            env::predecessor_account_id(),
+            self.owner_id,
+            "Only owner can create a new puzzle"
+        );
+        let existing = self.puzzles.insert(
+            &solution_hash,
+            &Puzzle {
+                status: PuzzleStatus::Unsolved,
+                answers: answers,
+            },
+        );
+
+        assert!(existing.is_none(), "Puzzle with that key already exists");
+        self.unsolved_puzzles.insert(&solution_hash);
     }
 }
 
