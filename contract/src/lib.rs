@@ -1,4 +1,10 @@
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::{LookupMap, UnorderedSet};
+use near_sdk::{
+    borsh::{self, BorshDeserialize, BorshSerialize},
+    log,
+    serde::{Deserialize, Serialize},
+    AccountId, PanicOnDefault, Promise,
+};
 use near_sdk::{env, near_bindgen};
 
 // 5 Ⓝ in yoctoNEAR
@@ -6,18 +12,12 @@ const PRIZE_AMOUNT: u128 = 5_000_000_000_000_000_000_000_000;
 
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
-pub struct AnswerDirection {
+pub enum AnswerDirection {
     Across,
     Down,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
-#[serde(crate = "near_sdk::serde")]
-pub struct PuzzleStatus {
-    Unsolved,
-    Solved { memo: String },
-}
-
+/// The origin (0,0) starts at the top left side of the square
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct CoordinatePair {
@@ -25,6 +25,8 @@ pub struct CoordinatePair {
     y: u8,
 }
 
+// {"num": 1, "start": {"x": 19, "y": 31}, "direction": "Across", "length": 8, "clue": "not far but"}
+// We'll have the clue stored on-chain for now for simplicity.
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Answer {
@@ -35,9 +37,23 @@ pub struct Answer {
     clue: String,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub enum PuzzleStatus {
+    Unsolved,
+    Solved { memo: String },
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct UnsolvedPuzzles {
+    puzzles: Vec<JsonPuzzle>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct JsonPuzzle {
+    /// The human-readable (not in bytes) hash of the solution
     solution_hash: String,
     status: PuzzleStatus,
     answer: Vec<Answer>,
@@ -45,11 +61,15 @@ pub struct JsonPuzzle {
 
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub struct Puzzle {
-    status: PuzzleStatus, // an enum
-    // use the CoordinatePair assuming the origin is (0,0) in the top left corner
-    answer: Vec<Answer>, // struct
+    status: PuzzleStatus,
+    /// Use the CoordinatePair assuming the origin is (0, 0) in the top left side of the puzzle.
+    answer: Vec<Answer>,
 }
 
+/// Regarding PanicOnDefault:
+/// When you want to have a "new" function initialize a smart contract,
+/// you'll likely want to follow this pattern of having a default implementation that panics,
+/// directing the user to call the initialization method. (The one with the #[init] macro)
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Crossword {
@@ -78,13 +98,13 @@ impl Crossword {
             .puzzles
             .get(&hashed_input_hex)
             .expect("ERR_NOT_CORRECT_ANSWER");
-        
-        // Check if the puzzle is already solved. If it's unsolved, set the status to solved
-        // then proceed to update the puzzle and pay the winner
-        puzzle.status = match.puzzle.status {
+
+        // Check if the puzzle is already solved. If it's unsolved, set the status to solved,
+        //   then proceed to update the puzzle and pay the winner.
+        puzzle.status = match puzzle.status {
             PuzzleStatus::Unsolved => PuzzleStatus::Solved { memo: memo.clone() },
             _ => {
-                env::panic_str("ERR_PUZZLE_ALREADY_SOLVED");
+                env::panic_str("ERR_PUZZLE_SOLVED");
             }
         };
 
@@ -103,21 +123,17 @@ impl Crossword {
         Promise::new(env::predecessor_account_id()).transfer(PRIZE_AMOUNT);
     }
 
-    pub fn get_solution(&self) -> String {
-        self.crossword_solution.clone()
-    }
-
-    pub fn guess_solution(&mut self, solution: String) -> bool {
-        let hashed_input = env::sha256(solution.as_bytes());
-        let hashed_input_hex = hex::encode(&hashed_input);
-
-        if hashed_input_hex == self.crossword_solution {
-            env::log_str("You guessed right!");
-            true
-        } else {
-            env::log_str("Try again.");
-            false
+    /// Get the hash of a crossword puzzle solution from the unsolved_puzzles
+    pub fn get_solution(&self, puzzle_index: u32) -> Option<String> {
+        let mut index = 0;
+        for puzzle_hash in self.unsolved_puzzles.iter() {
+            if puzzle_index == index {
+                return Some(puzzle_hash);
+            }
+            index += 1;
         }
+        // Did not find that index
+        None
     }
 
     // adding a new crossword puzzle
@@ -131,7 +147,7 @@ impl Crossword {
             &solution_hash,
             &Puzzle {
                 status: PuzzleStatus::Unsolved,
-                answers: answers,
+                answer: answers,
             },
         );
 
