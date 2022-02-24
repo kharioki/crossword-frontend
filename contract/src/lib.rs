@@ -89,8 +89,8 @@ impl Crossword {
         }
     }
 
-    pub fn submit_solution(&mut self, solution: String, memo: String) {
-        let hashed_input = env::sha256(solution.as_bytes());
+    pub fn submit_solution(&mut self, solution_hash: String, memo: String) {
+        let hashed_input = env::sha256(solution_hash.as_bytes());
         let hashed_input_hex = hex::encode(&hashed_input);
 
         // Check to see if the hashed answer is among the puzzles
@@ -136,12 +136,19 @@ impl Crossword {
         None
     }
 
-    // adding a new crossword puzzle
+    pub fn get_puzzle_status(&self, solution_hash: String) -> Option<PuzzleStatus> {
+        let puzzle = self.puzzles.get(&solution_hash);
+        if puzzle.is_none() {
+            return None;
+        }
+        Some(puzzle.unwrap().status)
+    }
+
     pub fn new_puzzle(&mut self, solution_hash: String, answers: Vec<Answer>) {
         assert_eq!(
             env::predecessor_account_id(),
             self.owner_id,
-            "Only owner can create a new puzzle"
+            "Only the owner may call this method"
         );
         let existing = self.puzzles.insert(
             &solution_hash,
@@ -153,6 +160,26 @@ impl Crossword {
 
         assert!(existing.is_none(), "Puzzle with that key already exists");
         self.unsolved_puzzles.insert(&solution_hash);
+    }
+
+    pub fn get_unsolved_puzzles(&self) -> UnsolvedPuzzles {
+        let solution_hashes = self.unsolved_puzzles.to_vec();
+        let mut all_unsolved_puzzles = vec![];
+        for hash in solution_hashes {
+            let puzzle = self
+                .puzzles
+                .get(&hash)
+                .unwrap_or_else(|| env::panic_str("ERR_LOADING_PUZZLE"));
+            let json_puzzle = JsonPuzzle {
+                solution_hash: hash,
+                status: puzzle.status,
+                answer: puzzle.answer,
+            };
+            all_unsolved_puzzles.push(json_puzzle)
+        }
+        UnsolvedPuzzles {
+            puzzles: all_unsolved_puzzles,
+        }
     }
 }
 
@@ -167,7 +194,7 @@ impl Crossword {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use near_sdk::test_utils::{get_logs, VMContextBuilder};
+    use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::{testing_env, AccountId};
 
     // part of writing unit tests is setting up a mock context
@@ -176,6 +203,39 @@ mod tests {
         let mut builder = VMContextBuilder::new();
         builder.predecessor_account_id(predecessor);
         builder
+    }
+
+    fn get_answers() -> Vec<Answer> {
+        vec![
+            Answer {
+                num: 1,
+                start: CoordinatePair { x: 2, y: 1 },
+                direction: AnswerDirection::Across,
+                length: 4,
+                clue: "Native token".to_string(),
+            },
+            Answer {
+                num: 1,
+                start: CoordinatePair { x: 2, y: 1 },
+                direction: AnswerDirection::Down,
+                length: 7,
+                clue: "Name of the specs/standards site is ______.io".to_string(),
+            },
+            Answer {
+                num: 2,
+                start: CoordinatePair { x: 5, y: 1 },
+                direction: AnswerDirection::Down,
+                length: 3,
+                clue: "DeFi site on NEAR is ___.finance".to_string(),
+            },
+            Answer {
+                num: 4,
+                start: CoordinatePair { x: 0, y: 7 },
+                direction: AnswerDirection::Across,
+                length: 7,
+                clue: "DeFi decentralizes this".to_string(),
+            },
+        ]
     }
 
     #[test]
@@ -191,26 +251,50 @@ mod tests {
     }
 
     #[test]
-    fn check_guess_solution() {
+    #[should_panic(expected = "ERR_NOT_CORRECT_ANSWER")]
+    fn check_submit_solution_failure() {
         // Get Alice as an account ID
         let alice = AccountId::new_unchecked("alice.testnet".to_string());
         // Set up the testing context and unit test environment
-        let context = get_context(alice);
+        let context = get_context(alice.clone());
         testing_env!(context.build());
 
         // Set up contract object and call the new method
-        let mut contract = Contract::new(
+        let mut contract = Crossword::new(alice);
+        // Add puzzle
+        let answers = get_answers();
+        contract.new_puzzle(
             "69c2feb084439956193f4c21936025f14a5a5a78979d67ae34762e18a7206a0f".to_string(),
+            answers,
         );
-        let mut guess_result = contract.guess_solution("wrong answer here".to_string());
-        assert!(!guess_result, "Expected a failure from the wrong guess");
-        assert_eq!(get_logs(), ["Try again."], "Expected a failure log.");
-        guess_result = contract.guess_solution("near nomicon ref finance".to_string());
-        assert!(guess_result, "Expected the correct answer to return true.");
-        assert_eq!(
-            get_logs(),
-            ["Try again.", "You guessed right!"],
-            "Expected a successful log after the previous failed log."
+        contract.submit_solution("wrong answer here".to_string(), "my memo".to_string());
+    }
+
+    #[test]
+    fn check_submit_solution_success() {
+        // Get Alice as an account ID
+        let alice = AccountId::new_unchecked("alice.testnet".to_string());
+        // Set up the testing context and unit test environment
+        let context = get_context(alice.clone());
+        testing_env!(context.build());
+
+        // Set up contract object
+        let mut contract = Crossword::new(alice);
+
+        // Add puzzle
+        let answers = get_answers();
+        contract.new_puzzle(
+            "69c2feb084439956193f4c21936025f14a5a5a78979d67ae34762e18a7206a0f".to_string(),
+            answers,
         );
+
+        contract.submit_solution(
+            "near nomicon ref finance".to_string(),
+            "my memo".to_string(),
+        );
+
+        // Ensure the puzzle status is now Solved
+        // contract.get_puzzle_status("69c2feb084439956193f4c21936025f14a5a5a78979d67ae34762e18a7206a0f".to_string());
+        // assert_eq!(contract.unsolved_puzzles.len(), 0, "Should not have any unsolved puzzles.");
     }
 }

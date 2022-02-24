@@ -2,12 +2,17 @@
 // and turns it into what the crossword library would like.
 // Opportunity to enhance the library so this isn't necessary.
 import * as nearAPI from 'near-api-js';
+import bs58 from 'bs58';
 
 // Our API could be improved here :)
 // See: https://github.com/near/near-api-js/issues/612
-export async function viewMethodOnContract(nearConfig, method) {
+export async function viewMethodOnContract(nearConfig, method, params) {
+  const paramBytes = Buffer.from(params, 'utf8');
+  const base58Params = bs58.encode(paramBytes);
+
   const provider = new nearAPI.providers.JsonRpcProvider(nearConfig.nodeUrl);
-  const rawResult = await provider.query(`call/${nearConfig.contractName}/${method}`, 'AQ4'); // Base 58 of '{}'
+  const rawResult = await provider.query(`call/${nearConfig.contractName}/${method}`, base58Params);
+  console.log({ rawResult });
   return JSON.parse(rawResult.result.map((x) => String.fromCharCode(x)).join(''));
 }
 
@@ -66,7 +71,29 @@ export function parseSolutionSeedPhrase(data, gridData) {
   };
 */
 
+export function mungeBlockchainCrossword(chainData) {
+  const data = {
+    across: {},
+    down: {}
+  };
+  // Assume there is only one crossword puzzle, get the first
+  const crosswordClues = chainData[0].answer;
+
+  crosswordClues.forEach((clue) => {
+    // In the smart contract it's stored as "Across" but the
+    // React library uses "across"
+    const direction = clue.direction.toLowerCase();
+    data[direction][clue.num] = {};
+    data[direction][clue.num]['clue'] = clue.clue;
+    data[direction][clue.num]['answer'] = '?'.repeat(clue.length);
+    data[direction][clue.num]['row'] = clue.start.y;
+    data[direction][clue.num]['col'] = clue.start.x;
+  });
+  return data;
+}
+
 // module.exports = {
 //   viewMethodOnContract,
-//   parseSolutionSeedPhrase
+//   parseSolutionSeedPhrase,
+//   mungeBlockchainCrossword
 // };

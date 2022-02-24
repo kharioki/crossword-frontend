@@ -1,5 +1,5 @@
 module.exports = {
   resolve: {
-    fallback: { path: false, buffer: false, stream: false }
+    fallback: { path: false, buffer: false, stream: false, fs: false, }
   }
 };
